@@ -55,6 +55,9 @@ create_EBS_Snapshot_Tags() {
   #snapshot tags holds all tags that need to be applied to a given snapshot - by aggregating tags we ensure that ec2-create-tags is called only onece
   snapshot_tags="Key=CreatedBy,Value=ec2-automate-backup"
   #if $name_tag_create is true then append ec2ab_${ebs_selected}_$current_date to the variable $snapshot_tags
+  if $instance_name_tag_create; then
+    snapshot_tags="$snapshot_tags Key=InstanceName,Value=$ec2_volume_instance_name"
+  fi
   if $name_tag_create; then
     snapshot_tags="$snapshot_tags Key=Name,Value=ec2ab_${ebs_selected}_$current_date"
   fi
@@ -150,8 +153,9 @@ user_tags=false
 #sets the Purge Snapshot feature to false - if purge_snapshots=true then snapshots will be purged
 purge_snapshots=false
 #handles options processing
+instance_name_tag_create=false
 
-while getopts :s:c:r:v:t:k:pnhu opt; do
+while getopts :s:c:r:v:t:k:pnhui opt; do
   case $opt in
     s) selection_method="$OPTARG" ;;
     c) cron_primer="$OPTARG" ;;
@@ -163,6 +167,7 @@ while getopts :s:c:r:v:t:k:pnhu opt; do
     h) hostname_tag_create=true ;;
     p) purge_snapshots=true ;;
     u) user_tags=true ;;
+    i) instance_name_tag_create=true ;;
     *) echo "Error with Options Input. Cause of failure is most likely that an unsupported parameter was passed or a parameter was passed without a corresponding option." 1>&2 ; exit 64 ;;
   esac
 done
@@ -204,6 +209,14 @@ get_EBS_List
 
 #the loop below is called once for each volume in $ebs_backup_list - the currently selected EBS volume is passed in as "ebs_selected"
 for ebs_selected in $ebs_backup_list; do
+  if $instance_name_tag_create; then
+    #get the id of the instance the volume is attached to
+    ec2_volume_instance_id=$(aws ec2 describe-volumes --output text --volume-id $ebs_selected  --query 'Volumes[*].[Attachments[*].InstanceId]')
+    #get the name of the instance for the instance id
+    ec2_volume_instance_name=$(aws ec2 describe-instances --output text --instance-id $ec2_volume_instance_id --query 'Reservations[].Instances[].Tags[?Key==`Name`].Value')
+    #replace spaces with underscores (issue with tagging)
+    ec2_volume_instance_name=$(echo "$ec2_volume_instance_name"|sed -e 's/ /_/g')
+  fi
   ec2_snapshot_description="ec2ab_${ebs_selected}_$current_date"
   ec2_snapshot_resource_id=$(aws ec2 create-snapshot --region $region --description $ec2_snapshot_description --volume-id $ebs_selected --output text --query SnapshotId 2>&1)
   if [[ $? != 0 ]]; then
